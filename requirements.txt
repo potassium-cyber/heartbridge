@@ -1,0 +1,9 @@
+streamlit
+pandas
+snownlp
+wordcloud
+faker
+jieba
+matplotlib
+pillow
+numpy<2
