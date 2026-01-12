@@ -169,7 +169,12 @@ def _render_post_list(df, role_type):
         
         post_id = row['id']
         likes = row['likes'] if pd.notna(row['likes']) else 0
-        created_at = row['created_at']
+        
+        # 显式格式化时间，防止显示为 00:00:00 或默认格式
+        try:
+            created_at_str = pd.to_datetime(row['created_at']).strftime('%Y-%m-%d %H:%M')
+        except:
+            created_at_str = str(row['created_at'])
 
         # 获取评论
         comments_df = get_comments(post_id)
@@ -190,7 +195,7 @@ def _render_post_list(df, role_type):
                         <span class="role-badge {badge_class}">{role_label}</span>
                         <span>{display_name}</span>
                         <span>•</span>
-                        <span>{created_at}</span>
+                        <span>{created_at_str}</span>
                     </div>
                     <div class="post-content">{row['content']}</div>
                 </div>
