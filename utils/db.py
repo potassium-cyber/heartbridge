@@ -1,124 +1,158 @@
 import sqlite3
 import pandas as pd
 from datetime import datetime
+import streamlit as st
+import random
 
-# 数据库文件路径
+# 本地 SQLite 路径
 DB_FILE = 'heartbridge.db'
+
+# 检查是否配置了 Google Sheets 连接
+# 在 Streamlit Cloud 的 Secrets 里配置了 [connections.gsheets] 才会生效
+USE_GSHEETS = False
+if "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
+    from streamlit_gsheets import GSheetsConnection
+    USE_GSHEETS = True
 
 def init_db():
     """
-    初始化数据库：如果表不存在则创建。
+    初始化数据库。
+    SQLite: 建表。
+    GSheets: 检查 Worksheet 是否存在，不存在则创建 Header。
     """
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    
-    # 创建帖子表 (posts)
-    # 字段包含：id, 角色(role), 昵称(nickname), 标题(title), 内容(content), 是否隐藏(is_hidden), 创建时间(created_at), 点赞数(likes)
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS posts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            role TEXT NOT NULL,
-            nickname TEXT NOT NULL,
-            title TEXT,
-            content TEXT NOT NULL,
-            is_hidden BOOLEAN DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            likes INTEGER DEFAULT 0
-        )
-    ''')
-    
-    # 简单的 Schema 迁移检查：如果 likes 列不存在，则添加
-    # (为了兼容旧的数据库文件)
-    try:
-        c.execute("SELECT likes FROM posts LIMIT 1")
-    except sqlite3.OperationalError:
-        c.execute("ALTER TABLE posts ADD COLUMN likes INTEGER DEFAULT 0")
+    if USE_GSHEETS:
+        # Google Sheets 模式由连接器自动管理，通常只需要确保 Sheet 存在
+        # 这里我们可以做一个简单的连接测试
+        try:
+            conn = st.connection("gsheets", type=GSheetsConnection)
+            # 尝试读取，如果为空或报错，说明可能是新表
+            df = conn.read(ttl=0) 
+            if df.empty or set(df.columns) != {'id', 'role', 'nickname', 'title', 'content', 'is_hidden', 'created_at', 'likes'}:
+                # 如果是空表，初始化表头 (但这步通常建议手动在 Google Sheet 第一行填好)
+                # 这里的代码假设用户已经在 Google Sheet 里建好了对应的列名，或者接受自动创建
+                pass
+        except Exception as e:
+            print(f"GSheets 连接警告: {e}")
+    else:
+        # SQLite 模式
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                role TEXT NOT NULL,
+                nickname TEXT NOT NULL,
+                title TEXT,
+                content TEXT NOT NULL,
+                is_hidden BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                likes INTEGER DEFAULT 0
+            )
+        ''')
+        # 迁移检查
+        try:
+            c.execute("SELECT likes FROM posts LIMIT 1")
+        except sqlite3.OperationalError:
+            c.execute("ALTER TABLE posts ADD COLUMN likes INTEGER DEFAULT 0")
         conn.commit()
-    
-    conn.commit()
-    conn.close()
-
-def add_post(role, nickname, title, content, is_hidden=False):
-    """
-    新增一条提问/帖子。
-    """
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    
-    # 插入数据
-    c.execute('''
-        INSERT INTO posts (role, nickname, title, content, is_hidden, created_at, likes)
-        VALUES (?, ?, ?, ?, ?, ?, 0)
-    ''', (role, nickname, title, content, is_hidden, datetime.now()))
-    
-    conn.commit()
-    conn.close()
-
-def like_post(post_id):
-    """
-    给指定帖子点赞 (+1)
-    """
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("UPDATE posts SET likes = likes + 1 WHERE id = ?", (post_id,))
-    conn.commit()
-    conn.close()
-
-def unlike_post(post_id):
-    """
-    取消点赞 (-1)
-    """
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    # 确保点赞数不为负
-    c.execute("UPDATE posts SET likes = MAX(0, likes - 1) WHERE id = ?", (post_id,))
-    conn.commit()
-    conn.close()
+        conn.close()
 
 def get_posts():
-    """
-    获取所有帖子列表。
-    
-    Returns:
-        pd.DataFrame: 包含所有帖子数据的 DataFrame
-    """
-    conn = sqlite3.connect(DB_FILE)
-    
-    # 使用 pandas 读取 sql，方便后续处理
-    try:
-        df = pd.read_sql_query("SELECT * FROM posts ORDER BY created_at DESC", conn)
-    except Exception as e:
-        print(f"读取数据失败: {e}")
-        df = pd.DataFrame() # 返回空 DataFrame 防止报错
-    finally:
-        conn.close()
-        
-    return df
+    """获取所有帖子"""
+    if USE_GSHEETS:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        try:
+            # ttl=0 确保获取最新数据
+            df = conn.read(ttl=0)
+            # 确保数据类型正确
+            if not df.empty:
+                df['created_at'] = pd.to_datetime(df['created_at'])
+                df['id'] = df['id'].astype(str) # ID 转字符串防止匹配错误
+                df = df.sort_values(by='created_at', ascending=False)
+            return df
+        except Exception:
+            return pd.DataFrame(columns=['id', 'role', 'nickname', 'title', 'content', 'is_hidden', 'created_at', 'likes'])
+    else:
+        conn = sqlite3.connect(DB_FILE)
+        try:
+            df = pd.read_sql_query("SELECT * FROM posts ORDER BY created_at DESC", conn)
+            df['id'] = df['id'].astype(str)
+        except:
+            df = pd.DataFrame()
+        finally:
+            conn.close()
+        return df
 
 def get_posts_by_role(target_role):
-    """
-    根据发帖人角色筛选帖子。
-    例如：在“孩子的心声”板块，应该显示 role='孩子' 的帖子。
-    """
-    conn = sqlite3.connect(DB_FILE)
-    try:
-        query = "SELECT * FROM posts WHERE role = ? ORDER BY created_at DESC"
-        df = pd.read_sql_query(query, conn, params=(target_role,))
-    except Exception as e:
-        print(f"读取分角色数据失败: {e}")
-        df = pd.DataFrame()
-    finally:
-        conn.close()
-    return df
+    """按角色筛选"""
+    df = get_posts()
+    if df.empty:
+        return df
+    return df[df['role'] == target_role]
 
-# 如果直接运行此文件，则初始化数据库（用于测试）
-if __name__ == "__main__":
-    init_db()
-    print("数据库已初始化。")
+def add_post(role, nickname, title, content, is_hidden=False):
+    """新增帖子"""
+    new_data = {
+        "id": str(int(datetime.now().timestamp() * 1000)), # 使用时间戳生成唯一 ID
+        "role": role,
+        "nickname": nickname,
+        "title": title,
+        "content": content,
+        "is_hidden": is_hidden,
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "likes": 0
+    }
     
-    # 测试插入一条数据
-    # add_post("孩子", "还没有睡醒的考拉", "关于学习", "我总是感觉压力很大...", False)
-    # print("测试数据已插入。")
-    
-    # 测试读取
-    # print(get_posts())
+    if USE_GSHEETS:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        df = get_posts()
+        # 追加新行
+        updated_df = pd.concat([df, pd.DataFrame([new_data])], ignore_index=True)
+        conn.update(data=updated_df)
+    else:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute('''
+            INSERT INTO posts (role, nickname, title, content, is_hidden, created_at, likes)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (role, nickname, title, content, is_hidden, datetime.now(), 0))
+        conn.commit()
+        conn.close()
+
+def like_post(post_id):
+    """点赞 (+1)"""
+    post_id = str(post_id)
+    if USE_GSHEETS:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        df = get_posts()
+        if not df.empty:
+            # 找到对应的行并修改
+            mask = df['id'] == post_id
+            if mask.any():
+                df.loc[mask, 'likes'] = df.loc[mask, 'likes'].astype(int) + 1
+                conn.update(data=df)
+    else:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("UPDATE posts SET likes = likes + 1 WHERE id = ?", (post_id,))
+        conn.commit()
+        conn.close()
+
+def unlike_post(post_id):
+    """取消点赞 (-1)"""
+    post_id = str(post_id)
+    if USE_GSHEETS:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        df = get_posts()
+        if not df.empty:
+            mask = df['id'] == post_id
+            if mask.any():
+                current_likes = int(df.loc[mask, 'likes'].values[0])
+                df.loc[mask, 'likes'] = max(0, current_likes - 1)
+                conn.update(data=df)
+    else:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("UPDATE posts SET likes = MAX(0, likes - 1) WHERE id = ?", (post_id,))
+        conn.commit()
+        conn.close()

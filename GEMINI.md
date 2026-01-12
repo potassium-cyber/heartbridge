@@ -92,25 +92,43 @@ HeartBridge/
 * **模块化**：不要把所有代码写在一个文件里，UI 和 逻辑 (Utils) 要分离。
 * **美观性**：默认开启 `layout="wide"`，并在适当位置使用 `st.info` / `st.warning` 提示信息。
 
-## 7. 其他注意事项（Remarks）
-1. 使用`python`运行而不是`python3`。
-2. 使用git进行版本管理。
-（后续根据用户需求在这里补充）
----
+## 8. 部署指南 (Deployment Guide)
 
-### 💡 如何使用这个文件？
+为了实现云端数据的持久化保存，本项目支持 **Google Sheets** 作为数据库。部署步骤如下：
 
-你可以把上面的内容保存到你项目根目录下，命名为 `GEMINI.md`。
+### 8.1 准备 Google Sheet
+1.  创建一个新的 Google Sheet 表格。
+2.  第一行必须填写以下表头（Header）：
+    `id`, `role`, `nickname`, `title`, `content`, `is_hidden`, `created_at`, `likes`
+3.  将该表格设置为“任何人有链接均可编辑” (或者仅分享给 Service Account 邮箱，更安全)。
+4.  记录下表格 URL。
 
-**使用场景示例：**
+### 8.2 获取 API 密钥
+1.  前往 [Google Cloud Console](https://console.cloud.google.com/)。
+2.  创建一个新项目，并启用 **Google Sheets API** 和 **Google Drive API**。
+3.  创建一个 **Service Account**，并下载 JSON 格式的密钥文件。
 
-1. **当你开始做项目时，在命令行（或对话框）输入：**
-> “Gemini，请读取当前目录下的 GEMINI.md 文件。我想开始 Phase 1 的开发。请帮我写出 `utils/db.py` 的代码，暂时先用 SQLite 作为本地数据库。”
+### 8.3 部署到 Streamlit Cloud
+1.  将代码推送到 GitHub。
+2.  登录 [Streamlit Community Cloud](https://share.streamlit.io/)，关联仓库并点击 Deploy。
+3.  在部署界面的 **Advanced Settings -> Secrets** 中，填入以下配置：
 
+```toml
+[connections.gsheets]
+spreadsheet = "你的Google表格公开链接"
+type = "service_account"
+project_id = "xxx"
+private_key_id = "xxx"
+private_key = "xxx"
+client_email = "xxx"
+client_id = "xxx"
+auth_uri = "https://accounts.google.com/o/oauth2/auth"
+token_uri = "https://oauth2.googleapis.com/token"
+auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+client_x509_cert_url = "xxx"
+```
+*(注：只需将下载的 JSON 文件内容复制并转换为 TOML 格式填入即可)*
 
-2. **当你需要写随机昵称功能时：**
-> “基于 GEMINI.md 中定义的‘自动昵称生成’规则，帮我写一个 Python 函数，能区分家长和孩子生成不同的可爱昵称。”
-
-
-3. **当你要写教学文档时：**
-> “基于 GEMINI.md 的项目背景，为我生成一份比赛用的 PPT 大纲，强调科研价值。”
+### 8.4 本地运行与云端模式切换
+*   **本地模式**：如果不配置 Secrets，系统自动默认使用本地 `heartbridge.db` (SQLite)，方便开发。
+*   **云端模式**：一旦配置了 `[connections.gsheets]`，系统自动切换为 Google Sheets 存储。

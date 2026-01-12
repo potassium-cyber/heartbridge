@@ -8,3 +8,4 @@ matplotlib
 pillow
 numpy<2
 plotly
+st-gsheets-connection
