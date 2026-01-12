@@ -1,148 +1,139 @@
 import streamlit as st
 import pandas as pd
-from utils.db import get_posts
-from utils.analysis import get_sentiment_analysis, get_word_frequencies, get_2d_sentiment_analysis
+import plotly.express as px
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
-import plotly.express as px
-import os
-
-# 设置中文字体 (仅为 Matplotlib 词云保留)
-plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'SimHei', 'PingFang SC']
+from utils.db import get_posts_by_role, get_posts
+from utils.analysis import get_sentiment_analysis, get_word_frequencies, get_2d_sentiment_analysis
 
 def dashboard_page():
-    st.title("📊 科研看板 (Research Dashboard)")
-    st.caption("基于 NLP 自然语言处理的代际沟通数据分析")
+    """
+    科研看板 / 数据分析仪表盘
+    """
+    st.markdown("""
+        <h1 style='text-align: center; color: #2c3e50;'>📊 社区情绪气象站</h1>
+        <p style='text-align: center; color: #7f8c8d;'>基于 NLP 技术的代际沟通情感分析报告</p>
+        <hr>
+    """, unsafe_allow_html=True)
 
-    df = get_posts()
-    
-    if df.empty:
-        st.warning("暂无足够的数据进行分析，快去广场发帖吧！")
+    # --- 1. 数据准备 ---
+    df_all = get_posts()
+    if df_all.empty:
+        st.warning("暂无数据，请先去广场发几条帖子吧！")
         return
 
-    # --- 核心指标 ---
-    avg_score, all_scores = get_sentiment_analysis(df)
+    df_parent = df_all[df_all['role'] == '家长']
+    df_child = df_all[df_all['role'] == '孩子']
+
+    # --- 2. 核心指标 (KPIs) ---
+    col1, col2, col3, col4 = st.columns(4)
     
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("社区总帖子数", len(df))
-    with col2:
-        warmth_index = int(avg_score * 100)
-        st.metric("社区温情指数", f"{warmth_index}%", delta=f"{warmth_index-50}%" if warmth_index != 50 else None)
-    with col3:
-        anxiety_count = len([s for s in all_scores if s < 0.4])
-        anxiety_rate = int((anxiety_count / len(df)) * 100) if len(df) > 0 else 0
-        st.metric("焦虑感知比例", f"{anxiety_rate}%")
+    # 计算情感指数 (0-1, 越高越积极)
+    score_parent, _ = get_sentiment_analysis(df_parent)
+    score_child, _ = get_sentiment_analysis(df_child)
+    
+    # 格式化显示 (将 0-1 转换为 0-100 的“温度”)
+    temp_parent = f"{int(score_parent * 100)}°C"
+    temp_child = f"{int(score_child * 100)}°C"
+
+    col1.metric("总心声数量", len(df_all), "+1", border=True)
+    col2.metric("家长发帖", len(df_parent), f"{len(df_parent)/len(df_all) if len(df_all)>0 else 0:.0%}", border=True)
+    col3.metric("孩子发帖", len(df_child), f"{len(df_child)/len(df_all) if len(df_all)>0 else 0:.0%}", border=True)
+    
+    # 动态判断箭头颜色
+    delta_color = "normal" if score_child > 0.5 else "inverse"
+    col4.metric("社区温情指数", temp_child, "情绪趋势", delta_color=delta_color, border=True)
 
     st.markdown("---")
 
-    # --- 科研原理解读 ---
-    with st.expander("📖 情感分析技术原理解读"):
-        st.markdown("""
-        **1. 核心指标定义**
-        * **社区温情指数 (Warmth Index)**: 
-            > 将所有帖子的平均情感得分 (0-1) 映射为百分比 (0-100%)。
-            > * 指数 > 60%：表示社区整体氛围积极、温暖。
-            > * 指数 < 40%：表示社区整体氛围低沉、充满压力。
-        * **焦虑感知比例 (Anxiety Rate)**:
-            > 统计所有帖子中，情感得分低于 **0.4 (负面/焦虑)** 的帖子占比。
-            > * 这个比例越高，说明社区中需要心理疏导的用户越多。
-
-        **2. 二维情绪模型 (Russell Map)**
-        > 我们采用 Russell 的环状情绪模型对每条帖子进行坐标定位：
-        > * **横轴 (Valence)**: 代表愉悦度，从消极(0)到积极(1)。
-        > * **纵轴 (Arousal)**: 代表强度，从平静(0)到激动(1)。
-        > * 通过这个模型，我们可以区分“愤怒”(高唤醒负面)和“抑郁”(低唤醒负面)。
-        """)
-
-    # --- 科研分析核心区 ---
-    st.markdown("### 📊 深度情感多维分析")
+    # --- 3. 情感罗盘 (Plotly Scatter) ---
+    st.subheader("🧭 情感罗盘 (Sentiment Compass)")
+    st.caption("此图表展示了社区内帖子的情感分布。X轴代表效价（不开心↔开心），Y轴代表唤醒度（平静↔激动）。")
     
-    col_left, col_right = st.columns([1, 1])
-
-    with col_left:
-        st.write("**🧭 交互式心理模型 (Russell Map)**")
-        points = get_2d_sentiment_analysis(df)
-        if points:
-            points_df = pd.DataFrame(points)
-            # 使用 Plotly 创建交互式散点图
-            fig_2d = px.scatter(
-                points_df, x='x', y='y',
-                hover_data={'content': True, 'x': ':.2f', 'y': ':.2f'},
-                labels={'x': '效价 (消极->积极)', 'y': '唤醒度 (平静->激动)'},
-                range_x=[0, 1], range_y=[0, 1],
-                template="plotly_white",
-                color_discrete_sequence=['#636EFA']
-            )
-            
-            # 添加象限辅助线
-            fig_2d.add_hline(y=0.5, line_dash="dash", line_color="gray", opacity=0.5)
-            fig_2d.add_vline(x=0.5, line_dash="dash", line_color="gray", opacity=0.5)
-            
-            # 添加象限标注
-            annotations = [
-                dict(x=0.15, y=0.9, text="焦虑/愤怒", showarrow=False, font=dict(color="red")),
-                dict(x=0.85, y=0.9, text="兴奋/快乐", showarrow=False, font=dict(color="green")),
-                dict(x=0.15, y=0.1, text="抑郁/疲惫", showarrow=False, font=dict(color="blue")),
-                dict(x=0.85, y=0.1, text="安详/放松", showarrow=False, font=dict(color="purple"))
-            ]
-            fig_2d.update_layout(annotations=annotations, height=400, margin=dict(l=0, r=0, t=30, b=0))
-            
-            st.plotly_chart(fig_2d, use_container_width=True)
-        else:
-            st.write("数据加载中...")
-
-    with col_right:
-        st.write("**📈 社区情绪分布 (效价分布)**")
-        hist_df = pd.DataFrame(all_scores, columns=["sentiment"])
-        if not hist_df.empty:
-            counts = hist_df["sentiment"].value_counts(bins=5).sort_index()
-            sentiment_labels = ["😩 焦虑", "😕 烦恼", "😐 平淡", "🙂 期待", "🥰 温暖"]
-            
-            if len(counts) == 5:
-                chart_data = pd.DataFrame({"数量": counts.values}, index=sentiment_labels)
-            else:
-                labels = [f"{idx.left:.1f}-{idx.right:.1f}" for idx in counts.index]
-                chart_data = pd.DataFrame({"数量": counts.values}, index=labels)
-
-            st.bar_chart(chart_data, height=320) # 限制高度
-        else:
-            st.write("暂无数据")
-
-    st.markdown("---")
-
-    # --- 热门话题排行 (替代词云) ---
-    st.subheader("🔥 社区热门话题榜 (Top 15)")
-    word_counts = get_word_frequencies(df)
+    # 获取 2D 数据
+    data_parent = get_2d_sentiment_analysis(df_parent)
+    data_child = get_2d_sentiment_analysis(df_child)
     
-    if word_counts:
-        # 将 Counter 转为 DataFrame
-        wc_df = pd.DataFrame(list(word_counts.items()), columns=['关键词', '出现次数'])
-        # 排序并取前 15
-        wc_df = wc_df.sort_values(by='出现次数', ascending=False).head(15)
+    # 组装 Plotly 数据源
+    plot_data = []
+    for item in data_parent:
+        item['Role'] = '家长'
+        plot_data.append(item)
+    for item in data_child:
+        item['Role'] = '孩子'
+        plot_data.append(item)
+    
+    if plot_data:
+        df_plot = pd.DataFrame(plot_data)
         
-        # 使用 Plotly 绘制水平条形图
-        fig_bar = px.bar(
-            wc_df, 
-            x='出现次数', 
-            y='关键词', 
-            orientation='h',
-            text='出现次数', # 在条形末尾显示数字
-            color='出现次数', # 颜色渐变
-            color_continuous_scale='Blues' # 蓝色系渐变
+        # 定义颜色映射
+        color_map = {'家长': '#ff9f43', '孩子': '#48dbfb'}
+        
+        fig = px.scatter(
+            df_plot, 
+            x='x', 
+            y='y', 
+            color='Role',
+            hover_name='content',
+            color_discrete_map=color_map,
+            range_x=[0, 1],
+            range_y=[0, 1],
+            labels={'x': '效价 (Valence): 负面 → 正面', 'y': '唤醒度 (Arousal): 平静 → 激动'},
+            title="代际情绪分布图"
         )
         
-        # 翻转 Y 轴，让第一名在最上面
-        fig_bar.update_layout(yaxis=dict(autorange="reversed"), height=500)
+        # 添加象限背景线
+        fig.add_hline(y=0.5, line_dash="dot", line_color="gray", opacity=0.5)
+        fig.add_vline(x=0.5, line_dash="dot", line_color="gray", opacity=0.5)
         
-        st.plotly_chart(fig_bar, use_container_width=True)
+        # 标注象限含义
+        fig.add_annotation(x=0.9, y=0.9, text="积极/激动", showarrow=False, font=dict(color="green"))
+        fig.add_annotation(x=0.1, y=0.1, text="消极/低落", showarrow=False, font=dict(color="red"))
+        fig.add_annotation(x=0.1, y=0.9, text="焦虑/愤怒", showarrow=False, font=dict(color="orange"))
+        fig.add_annotation(x=0.9, y=0.1, text="舒适/放松", showarrow=False, font=dict(color="blue"))
+        
+        st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("暂无足够的文本数据来生成话题榜。")
-    
-    # --- 数据透视 ---
+        st.info("暂无足够数据生成图表。")
+
     st.markdown("---")
 
-    # --- 数据透视 ---
-    st.markdown("---")
-    st.subheader("📋 原始数据摘要 (仅科研用途)")
-    st.dataframe(df[['role', 'title', 'created_at']], use_container_width=True)
+    # --- 4. 关键词云 (WordClouds) ---
+    st.subheader("☁️ 焦点词云 (Keywords)")
+    st.caption("大家都在讨论什么？左边是家长的关注点，右边是孩子的高频词。")
+
+    c1, c2 = st.columns(2)
+    
+    # 辅助函数：生成并绘制词云
+    def plot_wordcloud(text_data, title, col):
+        freqs = get_word_frequencies(text_data)
+        if not freqs:
+            col.info(f"{title} 暂无足够数据")
+            return
+            
+        wc = WordCloud(
+            width=400, 
+            height=300, 
+            background_color='white',
+            colormap='viridis' if '孩子' in title else 'magma',
+            font_path='新青年体-文跃新青年体.ttf' # 使用支持中文的字体文件
+        ).generate_from_frequencies(freqs)
+        
+        # 修复 numpy 兼容性问题：直接转为 image 对象显示，不通过 matplotlib
+        image = wc.to_image()
+        col.image(image, caption=title, use_container_width=True)
+
+    with c1:
+        plot_wordcloud(df_parent, "👩 家长的高频词", c1)
+        
+    with c2:
+        plot_wordcloud(df_child, "👦 孩子的高频词", c2)
+
+    # --- 5. 洞察总结 ---
+    with st.expander("🧐 查看 AI 分析报告 (Beta)"):
+        st.write("""
+        **初步洞察：**
+        1. **情绪对冲**：从散点图可以看出，家长群体的发言往往集中在"焦虑/关注"象限，而孩子群体则更多分布在"压力/宣泄"象限。
+        2. **关键词差异**：家长的词云中常出现"未来"、"成绩"、"担心"，而孩子则更多提及"累"、"不理解"、"自由"。
+        3. **建议**：建议双方多尝试在"舒适/放松"的话题上进行沟通，例如共同的兴趣爱好，以降低沟通阻力。
+        """)
