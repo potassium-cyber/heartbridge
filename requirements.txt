@@ -7,3 +7,4 @@ jieba
 matplotlib
 pillow
 numpy<2
+plotly

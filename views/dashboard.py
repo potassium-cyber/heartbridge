@@ -4,11 +4,11 @@ from utils.db import get_posts
 from utils.analysis import get_sentiment_analysis, get_word_frequencies, get_2d_sentiment_analysis
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
+import plotly.express as px
 import os
 
-# 设置中文字体 (尝试解决 Matplotlib 中文乱码)
-plt.rcParams['font.sans-serif'] = ['SimHei', 'Arial Unicode MS', 'PingFang SC', 'Heiti TC', 'Droid Sans Fallback']
-plt.rcParams['axes.unicode_minus'] = False 
+# 设置中文字体 (仅为 Matplotlib 词云保留)
+plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'SimHei', 'PingFang SC']
 
 def dashboard_page():
     st.title("📊 科研看板 (Research Dashboard)")
@@ -27,11 +27,9 @@ def dashboard_page():
     with col1:
         st.metric("社区总帖子数", len(df))
     with col2:
-        # 情感分转为 0-100 的“温暖指数”
         warmth_index = int(avg_score * 100)
         st.metric("社区温情指数", f"{warmth_index}%", delta=f"{warmth_index-50}%" if warmth_index != 50 else None)
     with col3:
-        # 统计焦虑帖子的比例 (得分低于 0.4 视为潜在焦虑)
         anxiety_count = len([s for s in all_scores if s < 0.4])
         anxiety_rate = int((anxiety_count / len(df)) * 100) if len(df) > 0 else 0
         st.metric("焦虑感知比例", f"{anxiety_rate}%")
@@ -41,11 +39,20 @@ def dashboard_page():
     # --- 科研原理解读 ---
     with st.expander("📖 情感分析技术原理解读"):
         st.markdown("""
-        **Q: 什么是“温情指数”？**
-        > 我们使用 NLP (自然语言处理) 技术分析帖子内容的情感倾向。
-        > * **0.0 - 0.2 (焦虑/消极)**: 通常包含压力、抱怨或求助的关键词。
-        > * **0.4 - 0.6 (中性/平淡)**: 陈述事实，情绪波动不大。
-        > * **0.8 - 1.0 (温暖/积极)**: 包含鼓励、感谢或开心的内容。
+        **1. 核心指标定义**
+        * **社区温情指数 (Warmth Index)**: 
+            > 将所有帖子的平均情感得分 (0-1) 映射为百分比 (0-100%)。
+            > * 指数 > 60%：表示社区整体氛围积极、温暖。
+            > * 指数 < 40%：表示社区整体氛围低沉、充满压力。
+        * **焦虑感知比例 (Anxiety Rate)**:
+            > 统计所有帖子中，情感得分低于 **0.4 (负面/焦虑)** 的帖子占比。
+            > * 这个比例越高，说明社区中需要心理疏导的用户越多。
+
+        **2. 二维情绪模型 (Russell Map)**
+        > 我们采用 Russell 的环状情绪模型对每条帖子进行坐标定位：
+        > * **横轴 (Valence)**: 代表愉悦度，从消极(0)到积极(1)。
+        > * **纵轴 (Arousal)**: 代表强度，从平静(0)到激动(1)。
+        > * 通过这个模型，我们可以区分“愤怒”(高唤醒负面)和“抑郁”(低唤醒负面)。
         """)
 
     # --- 科研分析核心区 ---
@@ -54,29 +61,34 @@ def dashboard_page():
     col_left, col_right = st.columns([1, 1])
 
     with col_left:
-        st.write("**🧭 深度心理模型 (Russell 环状图)**")
+        st.write("**🧭 交互式心理模型 (Russell Map)**")
         points = get_2d_sentiment_analysis(df)
         if points:
-            fig_2d, ax_2d = plt.subplots(figsize=(5, 4)) # 缩小尺寸
+            points_df = pd.DataFrame(points)
+            # 使用 Plotly 创建交互式散点图
+            fig_2d = px.scatter(
+                points_df, x='x', y='y',
+                hover_data={'content': True, 'x': ':.2f', 'y': ':.2f'},
+                labels={'x': '效价 (消极->积极)', 'y': '唤醒度 (平静->激动)'},
+                range_x=[0, 1], range_y=[0, 1],
+                template="plotly_white",
+                color_discrete_sequence=['#636EFA']
+            )
             
-            x_vals = [p['x'] for p in points]
-            y_vals = [p['y'] for p in points]
-            ax_2d.scatter(x_vals, y_vals, alpha=0.5, c='#636EFA', s=60)
+            # 添加象限辅助线
+            fig_2d.add_hline(y=0.5, line_dash="dash", line_color="gray", opacity=0.5)
+            fig_2d.add_vline(x=0.5, line_dash="dash", line_color="gray", opacity=0.5)
             
-            ax_2d.axhline(y=0.5, color='gray', linestyle='--', alpha=0.3)
-            ax_2d.axvline(x=0.5, color='gray', linestyle='--', alpha=0.3)
+            # 添加象限标注
+            annotations = [
+                dict(x=0.15, y=0.9, text="焦虑/愤怒", showarrow=False, font=dict(color="red")),
+                dict(x=0.85, y=0.9, text="兴奋/快乐", showarrow=False, font=dict(color="green")),
+                dict(x=0.15, y=0.1, text="抑郁/疲惫", showarrow=False, font=dict(color="blue")),
+                dict(x=0.85, y=0.1, text="安详/放松", showarrow=False, font=dict(color="purple"))
+            ]
+            fig_2d.update_layout(annotations=annotations, height=400, margin=dict(l=0, r=0, t=30, b=0))
             
-            # 缩小字体以适应小图
-            font_size = 8
-            ax_2d.text(0.2, 0.85, "焦虑/愤怒", color='#EF553B', fontsize=font_size, ha='center')
-            ax_2d.text(0.8, 0.85, "兴奋/快乐", color='#00CC96', fontsize=font_size, ha='center')
-            ax_2d.text(0.2, 0.15, "抑郁/疲惫", color='#19D3F3', fontsize=font_size, ha='center')
-            ax_2d.text(0.8, 0.15, "安详/放松", color='#AB63FA', fontsize=font_size, ha='center')
-            
-            ax_2d.set_xlim(0, 1)
-            ax_2d.set_ylim(0, 1)
-            ax_2d.tick_params(axis='both', which='major', labelsize=7)
-            st.pyplot(fig_2d)
+            st.plotly_chart(fig_2d, use_container_width=True)
         else:
             st.write("数据加载中...")
 
@@ -99,37 +111,33 @@ def dashboard_page():
 
     st.markdown("---")
 
-    # --- 词云区 ---
-    st.subheader("☁️ 热门话题词云")
+    # --- 热门话题排行 (替代词云) ---
+    st.subheader("🔥 社区热门话题榜 (Top 15)")
     word_counts = get_word_frequencies(df)
+    
     if word_counts:
-        # 尝试寻找中文字体
-        font_path = None
-        candidate_fonts = [
-            '/System/Library/Fonts/STHeiti Light.ttc', 
-            '/System/Library/Fonts/PingFang.ttc',
-            '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
-            'C:/Windows/Fonts/simhei.ttf'
-        ]
-        for path in candidate_fonts:
-            if os.path.exists(path):
-                font_path = path
-                break
+        # 将 Counter 转为 DataFrame
+        wc_df = pd.DataFrame(list(word_counts.items()), columns=['关键词', '出现次数'])
+        # 排序并取前 15
+        wc_df = wc_df.sort_values(by='出现次数', ascending=False).head(15)
         
-        try:
-            wc = WordCloud(
-                font_path=font_path,
-                width=1000, height=300, # 扁平化，适应宽度
-                background_color='white',
-                max_words=100
-            ).generate_from_frequencies(word_counts)
-
-            fig_wc, ax_wc = plt.subplots(figsize=(10, 3))
-            ax_wc.imshow(wc.to_image(), interpolation='bilinear')
-            ax_wc.axis("off")
-            st.pyplot(fig_wc)
-        except Exception as e:
-            st.error(f"词云生成失败: {e}")
+        # 使用 Plotly 绘制水平条形图
+        fig_bar = px.bar(
+            wc_df, 
+            x='出现次数', 
+            y='关键词', 
+            orientation='h',
+            text='出现次数', # 在条形末尾显示数字
+            color='出现次数', # 颜色渐变
+            color_continuous_scale='Blues' # 蓝色系渐变
+        )
+        
+        # 翻转 Y 轴，让第一名在最上面
+        fig_bar.update_layout(yaxis=dict(autorange="reversed"), height=500)
+        
+        st.plotly_chart(fig_bar, use_container_width=True)
+    else:
+        st.info("暂无足够的文本数据来生成话题榜。")
     
     # --- 数据透视 ---
     st.markdown("---")
