@@ -11,11 +11,21 @@ st.set_page_config(
 )
 
 def main():
-    # 初始化 Session State
+    # --- 会话恢复逻辑 (解决刷新掉线问题) ---
+    # 如果 Session 中没有登录状态，但 URL 参数里有，则尝试恢复
     if "logged_in" not in st.session_state:
         st.session_state["logged_in"] = False
         st.session_state["role"] = None
         st.session_state["nickname"] = None
+
+    if not st.session_state["logged_in"]:
+        # 检查 URL 参数
+        qp = st.query_params
+        if "role" in qp and "nickname" in qp:
+            st.session_state["role"] = qp["role"]
+            st.session_state["nickname"] = qp["nickname"]
+            st.session_state["logged_in"] = True
+            st.rerun() # 恢复后立即刷新以更新界面状态
 
     # 路由控制
     if not st.session_state["logged_in"]:
@@ -34,6 +44,7 @@ def main():
             st.markdown("---")
             if st.button("退出登录"):
                 st.session_state.clear()
+                st.query_params.clear() # 同时清空 URL 参数
                 st.rerun()
                 
         # 根据选择渲染页面

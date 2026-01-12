@@ -145,14 +145,18 @@ def _load_custom_css():
 
 def _login_action(role):
     """
-    处理登录动作：生成昵称，写入Session，刷新页面
+    处理登录动作：生成昵称，写入Session，并持久化到 URL
     """
     nickname = generate_nickname(role)
     
-    # 写入 Session
+    # 1. 写入 Session (用于当前运行逻辑)
     st.session_state["role"] = role
     st.session_state["nickname"] = nickname
     st.session_state["logged_in"] = True
+    
+    # 2. 写入 URL Query Params (用于刷新后恢复)
+    st.query_params["role"] = role
+    st.query_params["nickname"] = nickname
     
     st.success(f"身份确认成功！你的匿名身份是：**{nickname}**")
     st.rerun()
